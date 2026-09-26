@@ -1,0 +1,827 @@
+// PropTrack relational schema.
+//
+// Conventions
+// - Every user-owned row carries `userId` (directly or through its parent) and every
+//   query in src/server scopes by it. Child rows cascade on delete.
+// - Money is stored as Decimal(18,4); prices as Decimal(20,8); quantities as Decimal(20,6).
+//   Arithmetic happens in src/lib/calc on scaled integers, never on raw floats.
+// - Derived trade columns (grossPnl, netPnl, rMultiple, riskPercent, ...) are rebuilt by
+//   src/server/services/rebuild.ts whenever a trade, exit or payout of the account changes.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Auth (Better Auth) ─────────────────────────────────────────────────────
+
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions      Session[]
+  authAccounts  AuthAccount[]
+
+  settings        UserSettings?
+  propFirms       PropFirm[]
+  accounts        TradingAccount[]
+  trades          Trade[]
+  tradeGroups     TradeGroup[]
+  strategies      Strategy[]
+  instruments     Instrument[]
+  sessionsDefs    TradingSession[]
+  tags            TradeTag[]
+  categories      Category[]
+  payouts         Payout[]
+  tradingRules    TradingRule[]
+  ruleViolations  RuleViolation[]
+  importBatches   ImportBatch[]
+  exchangeRates   ExchangeRate[]
+  screenshots     TradeScreenshot[]
+  integrations    IntegrationConnection[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+/// Better Auth credential/OAuth account. Named AuthAccount to avoid clashing with trading accounts.
+model AuthAccount {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("auth_accounts")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verifications")
+}
+
+/// Shared fixed-window rate limit counters (auth endpoints + app endpoints).
+model RateLimit {
+  id          String @id
+  key         String @unique
+  count       Int
+  lastRequest BigInt
+
+  @@map("rate_limits")
+}
+
+// ─── Settings ───────────────────────────────────────────────────────────────
+
+model UserSettings {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  defaultCurrency     String   @default("USD")
+  /// IANA timezone used to bucket trades into days for calendars and personal rules.
+  timezone            String   @default("UTC")
+  riskPercent         Decimal? @db.Decimal(8, 4)
+  maxTradesPerDay     Int?
+  maxDailyLossPct     Decimal? @db.Decimal(8, 4)
+  defaultRR           Decimal? @db.Decimal(8, 4)
+  /// |net P&L| at or below this amount counts as break-even.
+  breakevenTolerance  Decimal  @default(0) @db.Decimal(18, 4)
+  /// Behavioural insights are only shown when at least this many trades back them.
+  insightMinTrades    Int      @default(20)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@map("user_settings")
+}
+
+model ExchangeRate {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 1 unit of `base` = `rate` units of `quote`.
+  base      String
+  quote     String
+  rate      Decimal  @db.Decimal(20, 8)
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, base, quote])
+  @@map("exchange_rates")
+}
+
+// ─── Prop firms & accounts ──────────────────────────────────────────────────
+
+model PropFirm {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  website   String?
+  notes     String?
+  /// Default rule template applied to new accounts of this firm (JSON of AccountRule fields).
+  ruleTemplate Json?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  accounts  TradingAccount[]
+
+  @@unique([userId, name])
+  @@map("prop_firms")
+}
+
+enum AccountStatus {
+  CHALLENGE
+  PASSED
+  FUNDED
+  PAYOUT_ELIGIBLE
+  PAYOUT_RECEIVED
+  FAILED
+  BREACHED
+  SUSPENDED
+  ARCHIVED
+}
+
+enum AccountType {
+  ONE_STEP
+  TWO_STEP
+  THREE_STEP
+  INSTANT_FUNDED
+  FUNDED
+  PERSONAL
+  OTHER
+}
+
+model TradingAccount {
+  id               String         @id @default(cuid())
+  userId           String
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  propFirmId       String?
+  propFirm         PropFirm?      @relation(fields: [propFirmId], references: [id], onDelete: SetNull)
+  name             String
+  accountNumber    String?
+  accountSize      Decimal        @db.Decimal(18, 4)
+  startingBalance  Decimal        @db.Decimal(18, 4)
+  currency         String         @default("USD")
+  accountType      AccountType    @default(TWO_STEP)
+  /// Evaluation phase number (1, 2, 3) for multi-step challenges; null for funded/instant.
+  phase            Int?
+  status           AccountStatus  @default(CHALLENGE)
+  purchasedAt      DateTime?
+  startedAt        DateTime?
+  endedAt          DateTime?
+  /// Previous stage in the lifecycle chain (challenge → phase 2 → funded, or a reset attempt).
+  parentAccountId  String?
+  parentAccount    TradingAccount?  @relation("AccountLineage", fields: [parentAccountId], references: [id], onDelete: SetNull)
+  childAccounts    TradingAccount[] @relation("AccountLineage")
+  notes            String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  rule             AccountRule?
+  events           AccountEvent[]
+  fees             AccountFee[]
+  trades           Trade[]
+  payouts          Payout[]
+  dailyPerformance DailyPerformance[]
+  violations       RuleViolation[]
+  tradingRules     TradingRule[]
+  importBatches    ImportBatch[]
+  integrations     IntegrationConnection[]
+
+  @@index([userId, status])
+  @@index([propFirmId])
+  @@map("trading_accounts")
+}
+
+enum DrawdownType {
+  /// Floor = starting balance − max loss. Never moves.
+  STATIC
+  /// Floor trails the highest end-of-day closed balance.
+  TRAILING_EOD
+  /// Floor trails the highest closed-trade balance (intraday, closed trades only).
+  TRAILING_BALANCE
+}
+
+enum DailyLossBasis {
+  /// Limit amount = % of starting balance (e.g. FTMO-style).
+  STARTING_BALANCE
+  /// Limit amount = % of the balance at the start of each trading day.
+  DAY_START_BALANCE
+}
+
+model AccountRule {
+  id                    String         @id @default(cuid())
+  accountId             String         @unique
+  account               TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  profitTargetPct       Decimal?       @db.Decimal(8, 4)
+  maxDailyLossPct       Decimal?       @db.Decimal(8, 4)
+  dailyLossBasis        DailyLossBasis @default(STARTING_BALANCE)
+  maxOverallLossPct     Decimal?       @db.Decimal(8, 4)
+  drawdownType          DrawdownType   @default(STATIC)
+  /// Trailing floor stops rising once it reaches the starting balance.
+  trailingLocksAtStart  Boolean        @default(true)
+  minTradingDays        Int?
+  maxTradingDays        Int?
+  maxPositionSize       Decimal?       @db.Decimal(20, 6)
+  maxOpenContracts      Decimal?       @db.Decimal(20, 6)
+  newsTradingAllowed    Boolean        @default(true)
+  weekendHoldingAllowed Boolean        @default(true)
+  /// Largest single winning day may be at most this % of total profit.
+  consistencyPct        Decimal?       @db.Decimal(8, 4)
+  payoutThresholdAmount Decimal?       @db.Decimal(18, 4)
+  payoutFrequencyDays   Int?
+  profitSplitPct        Decimal?       @db.Decimal(8, 4)
+  /// Trading day boundary: hour (0-23) in `dayResetTimezone` at which a new day starts.
+  dayResetHour          Int            @default(0)
+  dayResetTimezone      String?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  @@map("account_rules")
+}
+
+enum AccountEventType {
+  CHALLENGE_PURCHASED
+  CHALLENGE_STARTED
+  PHASE_PASSED
+  CHALLENGE_PASSED
+  FUNDED_ACTIVATED
+  PAYOUT_REQUESTED
+  PAYOUT_APPROVED
+  PAYOUT_RECEIVED
+  PAYOUT_REJECTED
+  ACCOUNT_BREACHED
+  ACCOUNT_FAILED
+  ACCOUNT_RESET
+  ACCOUNT_SUSPENDED
+  ACCOUNT_CLOSED
+  STATUS_CHANGED
+  NOTE
+}
+
+model AccountEvent {
+  id         String           @id @default(cuid())
+  accountId  String
+  account    TradingAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  type       AccountEventType
+  occurredAt DateTime
+  amount     Decimal?         @db.Decimal(18, 4)
+  fromStatus AccountStatus?
+  toStatus   AccountStatus?
+  payoutId   String?
+  notes      String?
+  createdAt  DateTime         @default(now())
+
+  @@index([accountId, occurredAt])
+  @@map("account_events")
+}
+
+enum FeeType {
+  CHALLENGE
+  RESET
+  ACTIVATION
+  SUBSCRIPTION
+  DATA
+  OTHER
+}
+
+model AccountFee {
+  id        String         @id @default(cuid())
+  accountId String
+  account   TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  type      FeeType
+  amount    Decimal        @db.Decimal(18, 4)
+  /// Fees may be paid in a different currency than the account trades in.
+  currency  String
+  paidAt    DateTime
+  /// Refunded portion (e.g. challenge fee refunded with first payout).
+  refunded  Decimal        @default(0) @db.Decimal(18, 4)
+  notes     String?
+  createdAt DateTime       @default(now())
+
+  @@index([accountId])
+  @@map("account_fees")
+}
+
+// ─── Reference data ─────────────────────────────────────────────────────────
+
+enum AssetClass {
+  FOREX
+  INDEX
+  COMMODITY
+  CRYPTO
+  STOCK
+  FUTURES
+  OTHER
+}
+
+model Instrument {
+  id          String     @id @default(cuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol      String
+  name        String?
+  assetClass  AssetClass @default(OTHER)
+  /// Account-currency value of a 1.0 price move for 1 unit of quantity (e.g. 100000 for a standard FX lot in a USD-quoted pair).
+  pointValue  Decimal    @default(1) @db.Decimal(20, 8)
+  tickSize    Decimal?   @db.Decimal(20, 10)
+  createdAt   DateTime   @default(now())
+  trades      Trade[]
+
+  @@unique([userId, symbol])
+  @@map("instruments")
+}
+
+model Strategy {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  color       String?
+  isArchived  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  trades      Trade[]
+
+  @@unique([userId, name])
+  @@map("strategies")
+}
+
+/// Market session definition. A trade is assigned to the first active session (by priority) containing its open time.
+model TradingSession {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  timezone    String   @default("America/New_York")
+  /// Minutes after midnight in `timezone`. end < start means the session wraps midnight.
+  startMinute Int
+  endMinute   Int
+  priority    Int      @default(100)
+  color       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  trades      Trade[]
+
+  @@unique([userId, name])
+  @@map("trading_sessions")
+}
+
+enum CategoryKind {
+  SETUP
+  TIMEFRAME
+  TRADE_TYPE
+  ENTRY_MODEL
+  CONFLUENCE
+  MARKET_CONDITION
+}
+
+/// User-defined option lists for trade classification fields.
+model Category {
+  id        String       @id @default(cuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      CategoryKind
+  name      String
+  createdAt DateTime     @default(now())
+
+  @@unique([userId, kind, name])
+  @@map("categories")
+}
+
+enum TagKind {
+  POSITIVE
+  MISTAKE
+  NEUTRAL
+}
+
+model TradeTag {
+  id          String               @id @default(cuid())
+  userId      String
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  kind        TagKind              @default(NEUTRAL)
+  color       String?
+  isDefault   Boolean              @default(false)
+  createdAt   DateTime             @default(now())
+  assignments TradeTagAssignment[]
+
+  @@unique([userId, name])
+  @@map("trade_tags")
+}
+
+// ─── Trades ─────────────────────────────────────────────────────────────────
+
+/// Links copies of the same trade idea taken on several accounts, so portfolio-level
+/// trade statistics count the idea once while money metrics still sum every copy.
+model TradeGroup {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label     String?
+  createdAt DateTime @default(now())
+  trades    Trade[]
+
+  @@map("trade_groups")
+}
+
+enum Direction {
+  LONG
+  SHORT
+}
+
+enum TradeStatus {
+  OPEN
+  CLOSED
+}
+
+enum TradeSource {
+  MANUAL
+  CSV
+  API
+}
+
+enum TradeGrade {
+  A_PLUS
+  A
+  B
+  C
+  D
+  F
+}
+
+model Trade {
+  id              String         @id @default(cuid())
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId       String
+  account         TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  groupId         String?
+  group           TradeGroup?    @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  instrumentId    String
+  instrument      Instrument     @relation(fields: [instrumentId], references: [id], onDelete: Restrict)
+  symbol          String
+  direction       Direction
+  status          TradeStatus    @default(CLOSED)
+  openedAt        DateTime
+  closedAt        DateTime?
+  entryPrice      Decimal        @db.Decimal(20, 8)
+  /// Quantity-weighted average of exits.
+  exitPrice       Decimal?       @db.Decimal(20, 8)
+  stopLoss        Decimal?       @db.Decimal(20, 8)
+  takeProfit      Decimal?       @db.Decimal(20, 8)
+  quantity        Decimal        @db.Decimal(20, 6)
+  /// Snapshot of the instrument point value at entry, so later edits don't rewrite history.
+  pointValue      Decimal        @db.Decimal(20, 8)
+  /// Commission paid, as a positive cost.
+  commission      Decimal        @default(0) @db.Decimal(18, 4)
+  /// Swap/financing, signed (negative = cost).
+  swap            Decimal        @default(0) @db.Decimal(18, 4)
+  /// When set, the platform-reported gross P&L is used instead of the price-based calculation.
+  reportedGrossPnl Decimal?      @db.Decimal(18, 4)
+  /// User-specified risk in money; overrides the stop-based calculation.
+  riskAmountOverride Decimal?    @db.Decimal(18, 4)
+  mfePrice        Decimal?       @db.Decimal(20, 8)
+  maePrice        Decimal?       @db.Decimal(20, 8)
+
+  // Derived — rebuilt by services/rebuild.ts
+  grossPnl        Decimal?       @db.Decimal(18, 4)
+  netPnl          Decimal?       @db.Decimal(18, 4)
+  initialRisk     Decimal?       @db.Decimal(18, 4)
+  riskPercent     Decimal?       @db.Decimal(10, 4)
+  rMultiple       Decimal?       @db.Decimal(12, 4)
+  plannedRR       Decimal?       @db.Decimal(12, 4)
+  /// Account balance immediately before the trade closed (for % metrics).
+  balanceBefore   Decimal?       @db.Decimal(18, 4)
+  /// Trading-day key (YYYY-MM-DD) of the close in the account's day boundary.
+  tradingDay      String?
+  /// Weekday (0 = Sunday) of the open time in the user's timezone, for filtering.
+  weekday         Int?
+
+  // Classification
+  strategyId      String?
+  strategy        Strategy?      @relation(fields: [strategyId], references: [id], onDelete: SetNull)
+  sessionId       String?
+  session         TradingSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  setup           String?
+  timeframe       String?
+  tradeType       String?
+  entryModel      String?
+  confluences     String[]       @default([])
+  marketCondition String?
+  grade           TradeGrade?
+
+  source          TradeSource    @default(MANUAL)
+  externalId      String?
+  importBatchId   String?
+  importBatch     ImportBatch?   @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  /// Normalised identity used for duplicate detection (see lib/import/duplicates.ts).
+  fingerprint     String
+  notes           String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  exits           TradeExit[]
+  journal         TradeJournal?
+  tags            TradeTagAssignment[]
+  screenshots     TradeScreenshot[]
+  violations      RuleViolation[]
+
+  @@index([userId, closedAt])
+  @@index([accountId, closedAt])
+  @@index([userId, fingerprint])
+  @@index([groupId])
+  @@index([strategyId])
+  @@map("trades")
+}
+
+/// Partial (or full) exit leg. A closed trade's exit quantities sum to its quantity.
+model TradeExit {
+  id        String   @id @default(cuid())
+  tradeId   String
+  trade     Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  price     Decimal  @db.Decimal(20, 8)
+  quantity  Decimal  @db.Decimal(20, 6)
+  exitedAt  DateTime
+
+  @@index([tradeId])
+  @@map("trade_exits")
+}
+
+model TradeTagAssignment {
+  tradeId String
+  trade   Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  tagId   String
+  tag     TradeTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([tradeId, tagId])
+  @@index([tagId])
+  @@map("trade_tag_assignments")
+}
+
+model TradeJournal {
+  id                 String   @id @default(cuid())
+  tradeId            String   @unique
+  trade              Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  // Before
+  reason             String?
+  thesis             String?
+  setupExplanation   String?
+  expectedOutcome    String?
+  riskJustification  String?
+  // During
+  whatHappened       String?
+  followedPlan       Boolean?
+  changes            String?
+  // After
+  wentWell           String?
+  wentWrong          String?
+  lesson             String?
+  emotionalState     String?
+  mistakes           String?
+  // Psychology, 1–5
+  confidence         Int?
+  stress             Int?
+  fear               Int?
+  greed              Int?
+  patience           Int?
+  fomo               Int?
+  revenge            Int?
+  boredom            Int?
+  discipline         Int?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("trade_journals")
+}
+
+enum ScreenshotPhase {
+  BEFORE
+  DURING
+  AFTER
+}
+
+model TradeScreenshot {
+  id         String          @id @default(cuid())
+  userId     String
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tradeId    String
+  trade      Trade           @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  phase      ScreenshotPhase
+  storageKey String          @unique
+  mimeType   String
+  size       Int
+  caption    String?
+  createdAt  DateTime        @default(now())
+
+  @@index([tradeId])
+  @@map("trade_screenshots")
+}
+
+// ─── Payouts ────────────────────────────────────────────────────────────────
+
+enum PayoutStatus {
+  PENDING
+  REQUESTED
+  APPROVED
+  PAID
+  REJECTED
+}
+
+model Payout {
+  id               String         @id @default(cuid())
+  userId           String
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId        String
+  account          TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  status           PayoutStatus   @default(REQUESTED)
+  requestedAt      DateTime?
+  approvedAt       DateTime?
+  paidAt           DateTime?
+  /// Gross amount withdrawn from the trading account.
+  amountRequested  Decimal        @db.Decimal(18, 4)
+  /// Net cash actually received by the trader.
+  amountReceived   Decimal?       @db.Decimal(18, 4)
+  profitSplitPct   Decimal?       @db.Decimal(8, 4)
+  fees             Decimal        @default(0) @db.Decimal(18, 4)
+  paymentMethod    String?
+  currency         String
+  /// Whether the requested amount is debited from the account balance (true for most firms).
+  deductFromBalance Boolean       @default(true)
+  notes            String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([userId, status])
+  @@index([accountId])
+  @@map("payouts")
+}
+
+// ─── Performance cache & rules ──────────────────────────────────────────────
+
+/// Materialised per-account daily aggregate. Rebuilt with the account; never edited directly.
+model DailyPerformance {
+  id           String         @id @default(cuid())
+  accountId    String
+  account      TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// Trading-day key YYYY-MM-DD in the account's day boundary.
+  day          String
+  trades       Int
+  wins         Int
+  losses       Int
+  grossPnl     Decimal        @db.Decimal(18, 4)
+  netPnl       Decimal        @db.Decimal(18, 4)
+  rTotal       Decimal?       @db.Decimal(12, 4)
+  startBalance Decimal        @db.Decimal(18, 4)
+  endBalance   Decimal        @db.Decimal(18, 4)
+  /// Lowest closed-trade balance reached during the day.
+  minBalance   Decimal        @db.Decimal(18, 4)
+
+  @@unique([accountId, day])
+  @@map("daily_performance")
+}
+
+enum TradingRuleType {
+  MAX_RISK_PER_TRADE_PCT
+  MAX_TRADES_PER_DAY
+  MAX_LOSING_TRADES_PER_DAY
+  MAX_CONSECUTIVE_LOSSES_PER_DAY
+  MAX_DAILY_LOSS_PCT
+  MAX_DAILY_LOSS_AMOUNT
+  MAX_POSITION_SIZE
+  TRADING_HOURS
+  MIN_MINUTES_BETWEEN_TRADES
+}
+
+/// The trader's personal rules (distinct from prop-firm AccountRule limits).
+model TradingRule {
+  id          String          @id @default(cuid())
+  userId      String
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Null = applies to every account.
+  accountId   String?
+  account     TradingAccount? @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  type        TradingRuleType
+  value       Decimal?        @db.Decimal(18, 4)
+  /// For TRADING_HOURS: allowed window in minutes after midnight in the user timezone.
+  startMinute Int?
+  endMinute   Int?
+  /// Hard limits reject new manual trades that would break the rule. Off by default.
+  hardLimit   Boolean         @default(false)
+  isActive    Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  violations  RuleViolation[]
+
+  @@index([userId])
+  @@map("trading_rules")
+}
+
+enum ViolationSource {
+  PROP_RULE
+  PERSONAL_RULE
+}
+
+enum ViolationSeverity {
+  WARNING
+  BREACH
+}
+
+/// Derived rule violations; rebuilt with the account.
+model RuleViolation {
+  id            String            @id @default(cuid())
+  userId        String
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId     String
+  account       TradingAccount    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  tradeId       String?
+  trade         Trade?            @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  tradingRuleId String?
+  tradingRule   TradingRule?      @relation(fields: [tradingRuleId], references: [id], onDelete: Cascade)
+  source        ViolationSource
+  severity      ViolationSeverity
+  ruleKey       String
+  day           String
+  occurredAt    DateTime
+  message       String
+  actual        Decimal?          @db.Decimal(18, 4)
+  limit         Decimal?          @db.Decimal(18, 4)
+  createdAt     DateTime          @default(now())
+
+  @@index([userId, occurredAt])
+  @@index([accountId])
+  @@map("rule_violations")
+}
+
+// ─── Imports & integrations ─────────────────────────────────────────────────
+
+model ImportBatch {
+  id            String          @id @default(cuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId     String
+  account       TradingAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  source        String
+  filename      String?
+  rowCount      Int
+  importedCount Int
+  skippedCount  Int
+  createdAt     DateTime        @default(now())
+  trades        Trade[]
+
+  @@map("import_batches")
+}
+
+/// Placeholder for future broker/platform connections (MT4/5, cTrader, ...). No provider is live yet.
+model IntegrationConnection {
+  id         String          @id @default(cuid())
+  userId     String
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId  String?
+  account    TradingAccount? @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  provider   String
+  status     String          @default("DISCONNECTED")
+  config     Json?
+  lastSyncAt DateTime?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  @@map("integration_connections")
+}
