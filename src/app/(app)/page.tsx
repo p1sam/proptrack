@@ -129,7 +129,7 @@ export default async function DashboardPage(props: PageProps<"/">) {
             <div className="-mx-4 -my-4 divide-y">
               {d.recentTrades.map((t) => (
                 <Link key={t.id} href={`/trades/${t.id}`} className="flex items-center gap-3 px-4 py-2 text-sm hover:bg-muted/40">
-                  <span className={t.direction === "LONG" ? "w-10 text-xs text-profit" : "w-10 text-xs text-loss"}>{t.direction === "LONG" ? "Long" : "Short"}</span>
+                  <span className="w-10 text-xs text-muted-foreground">{t.direction === "LONG" ? "Long" : "Short"}</span>
                   <span className="w-20 font-medium">{t.symbol}</span>
                   <span className="hidden min-w-0 flex-1 truncate text-muted-foreground sm:block">
                     {t.account}

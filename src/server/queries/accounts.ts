@@ -3,8 +3,8 @@ import { cache } from "react";
 import type { AccountStatus } from "@/generated/prisma/enums";
 import { computeAccountEconomics, calculatePassRate, calculatePayoutROI, calculateAccountROI } from "@/lib/calc/economics";
 import { buildFxTable, convertAmount, sumConverted, type FxTable } from "@/lib/calc/fx";
-import { sumMoney, subMoney } from "@/lib/calc/money";
-import { STATUS_GROUP, ACTIVE_STATUSES } from "@/lib/labels";
+import { subMoney } from "@/lib/calc/money";
+import { STATUS_GROUP } from "@/lib/labels";
 import { num } from "@/lib/num";
 import { prisma } from "../db";
 import { getUserPrefs, ledgerInclude, stateOf, type LedgerAccount } from "../services/ledger";
@@ -111,11 +111,12 @@ export interface PortfolioSummary {
 
 /**
  * Portfolio economics across all accounts, converted to the user's currency. Capital and equity
- * count active accounts only; fees, payouts and trading P&L count every account ever held, since
+ * count live accounts only (challenges and funded); fees, payouts and trading P&L count every account ever held, since
  * failed challenges cost real money.
  */
 export function buildPortfolio(accounts: AccountSummary[], currency: string, fx: FxTable): PortfolioSummary {
-  const active = accounts.filter((a) => ACTIVE_STATUSES.includes(a.status));
+  // Live capital: accounts still trading (challenges and funded). A passed phase account is done.
+  const active = accounts.filter((a) => a.group === "challenge" || a.group === "funded");
   const byStatus: Partial<Record<AccountStatus, number>> = {};
   for (const a of accounts) byStatus[a.status] = (byStatus[a.status] ?? 0) + 1;
   const count = (g: string) => accounts.filter((a) => a.group === g).length;
@@ -152,4 +153,3 @@ export function convertFor(fx: FxTable, target: string) {
   return (amount: number, from: string) => convertAmount(amount, from, target, fx);
 }
 
-export { sumMoney };

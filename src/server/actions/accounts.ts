@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import type { AccountEventType, AccountStatus } from "@/generated/prisma/enums";
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "../db";
 import { createAction, UserError } from "../action";
 import { rebuildAccount } from "../services/rebuild";
@@ -281,6 +282,16 @@ export const addFee = createAction(feeSchema, async (input, user) => {
 export const deleteFee = createAction(z.object({ id }), async ({ id }, user) => {
   const r = await prisma.accountFee.deleteMany({ where: { id, account: { userId: user.id } } });
   if (!r.count) throw new UserError("Fee not found");
+  revalidateAccounts();
+  return undefined;
+});
+
+// ─── Additions for the accounts pages ───────────────────────────────────────
+
+/** Remove a prop firm's default rule template (savePropFirm treats a null template as "unchanged"). */
+export const clearPropFirmTemplate = createAction(z.object({ id }), async ({ id }, user) => {
+  const r = await prisma.propFirm.updateMany({ where: { id, userId: user.id }, data: { ruleTemplate: Prisma.DbNull } });
+  if (!r.count) throw new UserError("Prop firm not found");
   revalidateAccounts();
   return undefined;
 });

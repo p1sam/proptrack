@@ -13,6 +13,7 @@ import { prisma } from "../db";
 import { createAction, UserError } from "../action";
 import { rebuildAccount } from "../services/rebuild";
 import { balanceAtFactory, getUserPrefs, withdrawalsOf } from "../services/ledger";
+import { getStorage } from "../storage";
 
 async function resolveInstrument(userId: string, symbol: string, pointValue: number | null) {
   const existing = await prisma.instrument.findUnique({ where: { userId_symbol: { userId, symbol } } });
@@ -198,9 +199,14 @@ export const updateTrade = createAction(tradeSchema.safeExtend({ id }), async (i
 });
 
 export const deleteTrades = createAction(z.object({ ids: z.array(id).min(1).max(500) }), async ({ ids }, user) => {
-  const trades = await prisma.trade.findMany({ where: { id: { in: ids }, userId: user.id }, select: { id: true, accountId: true } });
+  const trades = await prisma.trade.findMany({ where: { id: { in: ids }, userId: user.id }, select: { id: true, accountId: true, groupId: true } });
   if (!trades.length) throw new UserError("Trade not found");
+  const shots = await prisma.tradeScreenshot.findMany({ where: { userId: user.id, tradeId: { in: trades.map((t) => t.id) } }, select: { storageKey: true } });
   await prisma.trade.deleteMany({ where: { id: { in: trades.map((t) => t.id) }, userId: user.id } });
+  // Screenshot rows cascade with the trade; remove the stored files too.
+  const storage = getStorage();
+  await Promise.all(shots.map((s) => storage.delete(s.storageKey).catch((e) => console.error("[screenshot delete]", e))));
+  await pruneGroups(user.id, trades.map((t) => t.groupId));
   for (const accountId of new Set(trades.map((t) => t.accountId))) await rebuildAccount(user.id, accountId);
   revalidateTrades();
   return { deleted: trades.length };
@@ -226,6 +232,17 @@ export const saveTradeJournal = createAction(
   },
 );
 
+/** Dissolve copy groups left with fewer than two trades (a lone "copy" is just a trade). */
+async function pruneGroups(userId: string, groupIds: (string | null)[]) {
+  const ids = [...new Set(groupIds.filter((g): g is string => !!g))];
+  if (ids.length) {
+    const counts = await prisma.trade.groupBy({ by: ["groupId"], where: { userId, groupId: { in: ids } }, _count: { _all: true } });
+    const lonely = counts.filter((c) => c._count._all < 2).map((c) => c.groupId!);
+    if (lonely.length) await prisma.trade.updateMany({ where: { userId, groupId: { in: lonely } }, data: { groupId: null } });
+  }
+  await prisma.tradeGroup.deleteMany({ where: { userId, trades: { none: {} } } });
+}
+
 /** Link existing trades on different accounts as copies of the same idea (or unlink). */
 export const setTradeGroup = createAction(z.object({ ids: z.array(id).min(1).max(20), link: z.boolean() }), async ({ ids, link }, user) => {
   const trades = await prisma.trade.findMany({ where: { id: { in: ids }, userId: user.id } });
@@ -234,11 +251,11 @@ export const setTradeGroup = createAction(z.object({ ids: z.array(id).min(1).max
     if (trades.length < 2) throw new UserError("Select at least two trades to link");
     if (new Set(trades.map((t) => t.accountId)).size !== trades.length) throw new UserError("Linked copies must be on different accounts");
     const group = await prisma.tradeGroup.create({ data: { userId: user.id, label: `${trades[0].symbol} ${trades[0].direction.toLowerCase()}` } });
-    await prisma.trade.updateMany({ where: { id: { in: ids } }, data: { groupId: group.id } });
+    await prisma.trade.updateMany({ where: { id: { in: ids }, userId: user.id }, data: { groupId: group.id } });
   } else {
     await prisma.trade.updateMany({ where: { id: { in: ids }, userId: user.id }, data: { groupId: null } });
   }
-  await prisma.tradeGroup.deleteMany({ where: { userId: user.id, trades: { none: {} } } });
+  await pruneGroups(user.id, trades.map((t) => t.groupId));
   revalidateTrades();
   return undefined;
 });

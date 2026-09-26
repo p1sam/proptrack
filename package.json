@@ -10,12 +10,13 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:start": "pglite-server --db=./.pglite --port=51214 --max-connections=1",
+    "db:start": "pglite-server --db=./.pglite --port=51214 --max-connections=20",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx --conditions=react-server prisma/seed.ts",
     "db:reset": "node scripts/reset-db.mjs",
     "postinstall": "prisma generate",
-    "db:migration:new": "node scripts/new-migration.mjs"
+    "db:migration:new": "node scripts/new-migration.mjs",
+    "test:integration": "vitest run --config vitest.integration.config.mts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

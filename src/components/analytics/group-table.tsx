@@ -8,17 +8,23 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
  * Per-group performance table (strategy, instrument, session, ...). Rows are listed in the
  * order given; nothing is labelled "best" — the reader compares the numbers.
  */
-export function GroupTable({
+export function GroupTable<R extends GroupStats = GroupStats>({
   rows,
   currency,
   label = "Group",
   hrefFor,
+  labelSuffix,
+  caption,
   columns = ["trades", "winRate", "netPnl", "averageR", "profitFactor", "expectancy", "maxDrawdown"],
 }: {
-  rows: GroupStats[];
+  rows: R[];
   currency: string;
   label?: string;
-  hrefFor?: (row: GroupStats) => string | null;
+  hrefFor?: (row: R) => string | null;
+  /** Optional extra content after the row label (e.g. a badge). */
+  labelSuffix?: (row: R) => React.ReactNode;
+  /** Visually hidden table caption for screen readers. */
+  caption?: string;
   columns?: ("trades" | "winRate" | "netPnl" | "averageR" | "profitFactor" | "expectancy" | "maxDrawdown" | "best" | "worst")[];
 }) {
   if (!rows.length) return <p className="py-6 text-center text-sm text-muted-foreground">No trades.</p>;
@@ -26,6 +32,7 @@ export function GroupTable({
   return (
     <div className="overflow-x-auto">
       <Table>
+        {caption && <caption className="sr-only">{caption}</caption>}
         <TableHeader>
           <TableRow>
             <TableHead>{label}</TableHead>
@@ -53,6 +60,7 @@ export function GroupTable({
                   ) : (
                     r.label
                   )}
+                  {labelSuffix?.(r)}
                 </TableCell>
                 {has("trades") && <TableCell className="text-right tabular">{r.trades}</TableCell>}
                 {has("winRate") && <TableCell className="text-right tabular">{formatPct(r.winRate)}</TableCell>}
