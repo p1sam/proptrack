@@ -1,4 +1,4 @@
-import { D, percentOf, roundMoney, subMoney } from "./money";
+import { MoneyAccumulator, percentOf, subMoney } from "./money";
 
 /**
  * Drawdown on an equity/balance path. Drawdown is measured from the running peak,
@@ -20,13 +20,8 @@ export function calculateDrawdown(current: number, peak: number): { amount: numb
 
 /** Running levels from an initial value plus successive changes (exact decimal accumulation). */
 export function cumulativeLevels(initial: number, changes: number[]): number[] {
-  const out: number[] = [];
-  let acc = D(initial);
-  for (const c of changes) {
-    acc = acc.plus(D(c));
-    out.push(roundMoney(acc));
-  }
-  return out;
+  const acc = new MoneyAccumulator(initial);
+  return changes.map((c) => acc.add(c).value);
 }
 
 export function drawdownSeries(initial: number, levels: number[]): DrawdownPoint[] {

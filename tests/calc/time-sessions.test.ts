@@ -42,3 +42,25 @@ describe("sessions", () => {
     expect(assignSession(new Date("2026-01-05T23:00:00Z"), defs)).toBeNull(); // 18:00 EST gap
   });
 });
+
+describe("offset-cached zoned parts", () => {
+  it("matches Intl across DST transitions", async () => {
+    const { zonedParts } = await import("@/lib/calc/time");
+    const fmt = (d: Date, tz: string) => {
+      const p = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(d);
+      const g = (t: string) => Number(p.find((x) => x.type === t)!.value);
+      return [g("year"), g("month"), g("day"), g("hour"), g("minute")];
+    };
+    const zones = ["America/New_York", "Europe/London", "Australia/Lord_Howe", "Asia/Kolkata", "UTC"];
+    // Walk 3 days around the 2026 US and EU DST switches in 7-minute steps.
+    for (const start of ["2026-03-07T00:00:00Z", "2026-03-28T00:00:00Z", "2026-10-31T00:00:00Z", "2026-04-04T00:00:00Z"]) {
+      for (let m = 0; m < 3 * 1440; m += 7) {
+        const d = new Date(new Date(start).getTime() + m * 60_000);
+        for (const tz of zones) {
+          const z = zonedParts(d, tz);
+          expect([z.year, z.month, z.day, z.hour, z.minute]).toEqual(fmt(d, tz));
+        }
+      }
+    }
+  });
+});

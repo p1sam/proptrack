@@ -36,7 +36,7 @@ export interface ZonedParts {
 
 const WEEKDAYS: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
-export function zonedParts(date: Date, timeZone: string): ZonedParts {
+function zonedPartsIntl(date: Date, timeZone: string): ZonedParts {
   const parts = formatter(timeZone).formatToParts(date);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "0";
   return {
@@ -47,6 +47,38 @@ export function zonedParts(date: Date, timeZone: string): ZonedParts {
     minute: Number(get("minute")),
     second: Number(get("second")),
     weekday: WEEKDAYS[get("weekday")] ?? 0,
+  };
+}
+
+// UTC offsets only change on 15-minute boundaries in every IANA zone, so the offset is cached
+// per zone and 15-minute bucket; wall-clock parts are then plain arithmetic on the shifted time.
+const BUCKET_MS = 15 * 60_000;
+const offsetCache = new Map<string, number>();
+
+function offsetMs(date: Date, timeZone: string): number {
+  const bucket = Math.floor(date.getTime() / BUCKET_MS);
+  const key = `${timeZone}|${bucket}`;
+  let off = offsetCache.get(key);
+  if (off === undefined) {
+    const probe = new Date(bucket * BUCKET_MS);
+    const p = zonedPartsIntl(probe, timeZone);
+    off = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - probe.getTime();
+    if (offsetCache.size > 50_000) offsetCache.clear();
+    offsetCache.set(key, off);
+  }
+  return off;
+}
+
+export function zonedParts(date: Date, timeZone: string): ZonedParts {
+  const local = new Date(date.getTime() + offsetMs(date, timeZone));
+  return {
+    year: local.getUTCFullYear(),
+    month: local.getUTCMonth() + 1,
+    day: local.getUTCDate(),
+    hour: local.getUTCHours(),
+    minute: local.getUTCMinutes(),
+    second: local.getUTCSeconds(),
+    weekday: local.getUTCDay(),
   };
 }
 

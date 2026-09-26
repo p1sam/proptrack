@@ -1,5 +1,5 @@
 import { calculateMaxDrawdown, cumulativeLevels } from "./drawdown";
-import { D, pctAmount, percentOf, roundMoney, roundRatio, subMoney, sumMoney } from "./money";
+import { D, MoneyAccumulator, pctAmount, percentOf, roundMoney, roundRatio, subMoney, sumMoney } from "./money";
 import { classifyOutcome } from "./stats";
 import { dayKey, daysBetweenKeys, spansWeekend } from "./time";
 
@@ -249,7 +249,7 @@ export function computeAccountState(input: ComputeAccountInput): AccountState {
   const locks = rule.trailingLocksAtStart ?? true;
   const today = keyOf(input.now);
 
-  let balance = D(start);
+  const balance = new MoneyAccumulator(start);
   let hwm = start; // high-water mark used by trailing floors
   const days = new Map<string, DaySummary>();
   const points: BalancePoint[] = [];
@@ -270,7 +270,7 @@ export function computeAccountState(input: ComputeAccountInput): AccountState {
     const key = keyOf(ev.at);
     if (!currentDay || currentDay.day !== key) {
       if (currentDay) closeDay(currentDay);
-      const b = roundMoney(balance);
+      const b = balance.value;
       const dailyLimit = rule.maxDailyLossPct ? calculateDailyLossLimit(start, b, rule.maxDailyLossPct, rule.dailyLossBasis) : null;
       currentDay = {
         day: key,
@@ -291,13 +291,13 @@ export function computeAccountState(input: ComputeAccountInput): AccountState {
 
     if (ev.kind === "trade") {
       const t = ev.trade;
-      balance = balance.plus(D(t.netPnl));
-      const b = roundMoney(balance);
+      balance.add(t.netPnl);
+      const b = balance.value;
       day.trades += 1;
       const o = classifyOutcome(t.netPnl, tol);
       if (o === "WIN") day.wins += 1;
       if (o === "LOSS") day.losses += 1;
-      day.netPnl = roundMoney(D(day.netPnl).plus(D(t.netPnl)));
+      day.netPnl = sumMoney([day.netPnl, t.netPnl]);
       if (t.rMultiple !== null && t.rMultiple !== undefined) day.rTotal = sumMoney([day.rTotal ?? 0, t.rMultiple]);
       day.endBalance = b;
       day.minBalance = Math.min(day.minBalance, b);
@@ -354,8 +354,8 @@ export function computeAccountState(input: ComputeAccountInput): AccountState {
       }
       points.push({ at: t.closedAt, balance: b, floor: floorNow(), kind: "trade", refId: t.id });
     } else {
-      balance = balance.minus(D(ev.withdrawal.amount));
-      const b = roundMoney(balance);
+      balance.sub(ev.withdrawal.amount);
+      const b = balance.value;
       day.endBalance = b;
       day.minBalance = Math.min(day.minBalance, b);
       points.push({ at: ev.at, balance: b, floor: floorNow(), kind: "withdrawal", refId: ev.withdrawal.id });
@@ -365,7 +365,7 @@ export function computeAccountState(input: ComputeAccountInput): AccountState {
 
   const dayList = [...days.values()].sort((a, b) => a.day.localeCompare(b.day));
   const tradeDays = dayList.filter((d) => d.trades > 0);
-  const finalBalance = roundMoney(balance);
+  const finalBalance = balance.value;
   const tradingPnl = sumMoney(input.trades.map((t) => t.netPnl));
   const totalWithdrawn = sumMoney((input.withdrawals ?? []).map((w) => w.amount));
 

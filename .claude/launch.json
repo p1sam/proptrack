@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "db", "runtimeExecutable": "npm", "runtimeArgs": ["run", "db:start"], "port": 51214 },
+    { "name": "web", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 3000 }
+  ]
+}

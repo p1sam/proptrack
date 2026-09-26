@@ -1,5 +1,5 @@
 import { drawdownSeries } from "./drawdown";
-import { D, percentOf, roundMoney, sumMoney } from "./money";
+import { D, MoneyAccumulator, percentOf, roundMoney, sumMoney } from "./money";
 import { classifyOutcome } from "./stats";
 import { dayKey, monthKey } from "./time";
 
@@ -25,14 +25,14 @@ export interface EquityPoint {
 /** Per-trade equity path starting from `startingCapital` (0 = pure cumulative P&L). */
 export function buildEquitySeries(trades: SeriesTrade[], startingCapital = 0): EquityPoint[] {
   const sorted = [...trades].sort((a, b) => a.closedAt.getTime() - b.closedAt.getTime() || a.id.localeCompare(b.id));
-  let cum = D(0);
-  let cumR = D(0);
+  const cum = new MoneyAccumulator();
+  const cumR = new MoneyAccumulator();
   const raw = sorted.map((t) => {
-    cum = cum.plus(D(t.netPnl));
-    if (t.rMultiple != null) cumR = cumR.plus(D(t.rMultiple));
-    return { t, cumPnl: roundMoney(cum), cumR: roundMoney(cumR) };
+    cum.add(t.netPnl);
+    if (t.rMultiple != null) cumR.add(t.rMultiple);
+    return { t, cumPnl: cum.value, cumR: cumR.value };
   });
-  const dd = drawdownSeries(startingCapital, raw.map((r) => roundMoney(D(startingCapital).plus(r.cumPnl))));
+  const dd = drawdownSeries(startingCapital, raw.map((r) => sumMoney([startingCapital, r.cumPnl])));
   return raw.map((r, i) => ({
     at: r.t.closedAt.toISOString(),
     tradeId: r.t.id,
@@ -65,18 +65,18 @@ export function buildDailySeries(trades: SeriesTrade[], timeZone: string, breake
     arr.push(t);
     byDay.set(k, arr);
   }
-  let cum = D(0);
+  const cum = new MoneyAccumulator();
   return [...byDay.keys()].sort().map((day) => {
     const list = byDay.get(day)!;
     const pnl = sumMoney(list.map((t) => t.netPnl));
-    cum = cum.plus(pnl);
+    cum.add(pnl);
     const wins = list.filter((t) => classifyOutcome(t.netPnl, breakevenTolerance) === "WIN").length;
     const losses = list.filter((t) => classifyOutcome(t.netPnl, breakevenTolerance) === "LOSS").length;
     const rs = list.map((t) => t.rMultiple).filter((r): r is number => r != null);
     return {
       day,
       pnl,
-      cumPnl: roundMoney(cum),
+      cumPnl: cum.value,
       trades: list.length,
       wins,
       losses,

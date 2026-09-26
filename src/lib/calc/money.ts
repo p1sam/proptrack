@@ -23,18 +23,44 @@ export function D(value: Numeric | null | undefined): Decimal {
   return new Decimal(value.toString());
 }
 
+const SCALE = 10 ** MONEY_DP;
+
+/**
+ * Scaled-integer units (1 unit = 10^-4). toPrecision(15) strips binary noise first, so
+ * 1.00005 → 10000.5 → 10001 (half away from zero) rather than 10000.4999… → 10000.
+ */
+function toUnits(v: number): number {
+  const scaled = Number((Math.abs(v) * SCALE).toPrecision(15));
+  return Math.sign(v) * Math.round(scaled);
+}
+
 /** Round half away from zero to `dp` decimals (default storage precision). */
 export function roundMoney(value: Numeric, dp = MONEY_DP): number {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new RangeError(`Non-finite number: ${value}`);
+    const f = 10 ** dp;
+    const r = Math.sign(value) * Math.round(Number((Math.abs(value) * f).toPrecision(15))) / f;
+    return r === 0 ? 0 : r;
+  }
   return D(value).toDecimalPlaces(dp, Decimal.ROUND_HALF_UP).toNumber();
 }
 
+/**
+ * Exact sum of money values. Numbers are summed as scaled integers (exact for values at
+ * storage precision, which all stored money is); other numerics go through decimal.js.
+ */
 export function sumMoney(values: Iterable<Numeric | null | undefined>): number {
-  let total = new Decimal(0);
+  let units = 0;
+  let dec: Decimal | null = null;
   for (const v of values) {
     if (v === null || v === undefined) continue;
-    total = total.plus(D(v));
+    if (typeof v === "number") {
+      if (!Number.isFinite(v)) throw new RangeError(`Non-finite number: ${v}`);
+      units += toUnits(v);
+    } else dec = (dec ?? new Decimal(0)).plus(D(v));
   }
-  return roundMoney(total);
+  const total = units / SCALE;
+  return dec ? roundMoney(dec.plus(total)) : roundMoney(total);
 }
 
 export function addMoney(...values: Numeric[]): number {
@@ -42,6 +68,7 @@ export function addMoney(...values: Numeric[]): number {
 }
 
 export function subMoney(a: Numeric, b: Numeric): number {
+  if (typeof a === "number" && typeof b === "number") return (toUnits(a) - toUnits(b)) / SCALE;
   return roundMoney(D(a).minus(D(b)));
 }
 
@@ -53,9 +80,10 @@ export function mulMoney(a: Numeric, ...factors: Numeric[]): number {
 
 /** a / b, or null when b is zero. Not rounded — use for ratios. */
 export function safeDiv(a: Numeric, b: Numeric): number | null {
-  const den = D(b);
-  if (den.isZero()) return null;
-  return D(a).div(den).toNumber();
+  const x = typeof a === "number" ? a : D(a).toNumber();
+  const y = typeof b === "number" ? b : D(b).toNumber();
+  if (y === 0) return null;
+  return x / y;
 }
 
 /** (part / whole) × 100, or null when whole is zero. */
@@ -69,6 +97,25 @@ export function pctAmount(amount: Numeric, pct: Numeric): number {
   return roundMoney(D(amount).times(D(pct)).div(100));
 }
 
+/** Running money accumulator on scaled integers (for replaying long ledgers). */
+export class MoneyAccumulator {
+  private units: number;
+  constructor(initial = 0) {
+    this.units = toUnits(initial);
+  }
+  add(v: number) {
+    this.units += toUnits(v);
+    return this;
+  }
+  sub(v: number) {
+    this.units -= toUnits(v);
+    return this;
+  }
+  get value() {
+    return this.units / SCALE;
+  }
+}
+
 /** Round a ratio to 6 significant decimals to strip float noise without losing meaning. */
 export function roundRatio(value: number, dp = 6): number {
   if (!Number.isFinite(value)) return value;
@@ -77,7 +124,7 @@ export function roundRatio(value: number, dp = 6): number {
 
 export function mean(values: number[]): number | null {
   if (values.length === 0) return null;
-  return roundRatio(D(sumMoney(values)).div(values.length).toNumber());
+  return roundRatio(sumMoney(values) / values.length);
 }
 
 export function isZeroMoney(value: number, tolerance = 0): boolean {
