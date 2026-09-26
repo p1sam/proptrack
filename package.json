@@ -7,16 +7,15 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:start": "prisma dev --name proptrack --port 51213 --db-port 51214 --shadow-db-port 51215 --detach",
-    "db:stop": "prisma dev stop proptrack",
-    "db:migrate": "prisma migrate dev",
-    "db:deploy": "prisma migrate deploy",
-    "db:seed": "prisma db seed",
-    "db:reset": "prisma migrate reset --force",
-    "postinstall": "prisma generate"
+    "db:start": "pglite-server --db=./.pglite --port=51214 --max-connections=1",
+    "db:migrate": "prisma migrate deploy",
+    "db:seed": "tsx --conditions=react-server prisma/seed.ts",
+    "db:reset": "node scripts/reset-db.mjs",
+    "postinstall": "prisma generate",
+    "db:migration:new": "node scripts/new-migration.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

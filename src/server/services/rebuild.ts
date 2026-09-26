@@ -4,6 +4,7 @@ import { evaluatePersonalRules, type PersonalRule, type RuleTrade } from "@/lib/
 import { computeTrade } from "@/lib/calc/trade";
 import { dayKey, zonedParts } from "@/lib/calc/time";
 import { num, numOrNull } from "@/lib/num";
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "../db";
 import { balanceAtFactory, getUserPrefs, stateFromParts, withdrawalsOf } from "./ledger";
 
@@ -56,28 +57,45 @@ export async function rebuildAccount(userId: string, accountId: string) {
     ...withdrawals.map((w) => ({ at: w.at, delta: -w.amount })),
   ]);
 
-  const updates = computed.map(({ t, c, closedAt }) => {
+  const derived = computed.map(({ t, c, closedAt }) => {
     const balanceBefore = balanceAt(t.openedAt);
     const riskPercent = c.initialRisk !== null && balanceBefore > 0 ? Math.round((c.initialRisk / balanceBefore) * 100 * 10000) / 10000 : null;
-    const session = assignSession(t.openedAt, sessions);
-    return prisma.trade.update({
-      where: { id: t.id },
-      data: {
-        status: c.closed ? "CLOSED" : "OPEN",
-        closedAt,
-        exitPrice: c.exitPrice,
-        grossPnl: c.grossPnl,
-        netPnl: c.netPnl,
-        initialRisk: c.initialRisk,
-        riskPercent,
-        rMultiple: c.rMultiple,
-        plannedRR: c.plannedRR,
-        balanceBefore,
-        tradingDay: closedAt ? dayKey(closedAt, ruleTz, resetHour) : null,
-        weekday: zonedParts(t.openedAt, prefs.timezone).weekday,
-        sessionId: session?.id ?? null,
-      },
-    });
+    return {
+      id: t.id,
+      status: c.closed ? "CLOSED" : "OPEN",
+      closedAt,
+      exitPrice: c.exitPrice,
+      grossPnl: c.grossPnl,
+      netPnl: c.netPnl,
+      initialRisk: c.initialRisk,
+      riskPercent,
+      rMultiple: c.rMultiple,
+      plannedRR: c.plannedRR,
+      balanceBefore,
+      tradingDay: closedAt ? dayKey(closedAt, ruleTz, resetHour) : null,
+      weekday: zonedParts(t.openedAt, prefs.timezone).weekday,
+      sessionId: assignSession(t.openedAt, sessions)?.id ?? null,
+      prev: t,
+    };
+  });
+  const changed = derived.filter((d) => {
+    const p = d.prev;
+    const same = (a: unknown, b: number | null) => (a === null || a === undefined ? b === null : b !== null && Number(String(a)) === b);
+    return !(
+      p.status === d.status &&
+      (p.closedAt?.getTime() ?? null) === (d.closedAt?.getTime() ?? null) &&
+      same(p.exitPrice, d.exitPrice) &&
+      same(p.grossPnl, d.grossPnl) &&
+      same(p.netPnl, d.netPnl) &&
+      same(p.initialRisk, d.initialRisk) &&
+      same(p.riskPercent, d.riskPercent) &&
+      same(p.rMultiple, d.rMultiple) &&
+      same(p.plannedRR, d.plannedRR) &&
+      same(p.balanceBefore, d.balanceBefore) &&
+      p.tradingDay === d.tradingDay &&
+      p.weekday === d.weekday &&
+      p.sessionId === d.sessionId
+    );
   });
 
   // 2 & 3 need the refreshed trades, so run the engine on the computed values.
@@ -129,7 +147,7 @@ export async function rebuildAccount(userId: string, accountId: string) {
   });
 
   await prisma.$transaction([
-    ...updates,
+    ...bulkUpdateTrades(changed),
     prisma.dailyPerformance.deleteMany({ where: { accountId } }),
     prisma.dailyPerformance.createMany({
       data: state.days
@@ -182,6 +200,55 @@ export async function rebuildAccount(userId: string, accountId: string) {
     }),
   ]);
   return state;
+}
+
+interface DerivedRow {
+  id: string;
+  status: string;
+  closedAt: Date | null;
+  exitPrice: number | null;
+  grossPnl: number | null;
+  netPnl: number | null;
+  initialRisk: number | null;
+  riskPercent: number | null;
+  rMultiple: number | null;
+  plannedRR: number | null;
+  balanceBefore: number;
+  tradingDay: string | null;
+  weekday: number;
+  sessionId: string | null;
+}
+
+/** One UPDATE … FROM (VALUES …) per chunk instead of one statement per trade. */
+function bulkUpdateTrades(rows: DerivedRow[]) {
+  const chunks: DerivedRow[][] = [];
+  for (let i = 0; i < rows.length; i += 500) chunks.push(rows.slice(i, i + 500));
+  return chunks.map((chunk) => {
+    const values = Prisma.join(
+      chunk.map(
+        (r) =>
+          Prisma.sql`(${r.id}, ${r.status}, ${r.closedAt?.toISOString() ?? null}, ${r.exitPrice}, ${r.grossPnl}, ${r.netPnl}, ${r.initialRisk}, ${r.riskPercent}, ${r.rMultiple}, ${r.plannedRR}, ${r.balanceBefore}, ${r.tradingDay}, ${r.weekday}, ${r.sessionId})`,
+      ),
+    );
+    return prisma.$executeRaw`
+      UPDATE trades AS t SET
+        status = v.status::"TradeStatus",
+        "closedAt" = (v.closed_at::timestamptz AT TIME ZONE 'UTC'),
+        "exitPrice" = v.exit_price::numeric,
+        "grossPnl" = v.gross_pnl::numeric,
+        "netPnl" = v.net_pnl::numeric,
+        "initialRisk" = v.initial_risk::numeric,
+        "riskPercent" = v.risk_percent::numeric,
+        "rMultiple" = v.r_multiple::numeric,
+        "plannedRR" = v.planned_rr::numeric,
+        "balanceBefore" = v.balance_before::numeric,
+        "tradingDay" = v.trading_day::text,
+        weekday = v.weekday::int,
+        "sessionId" = v.session_id::text,
+        "updatedAt" = now()
+      FROM (VALUES ${values}) AS v(id, status, closed_at, exit_price, gross_pnl, net_pnl, initial_risk, risk_percent, r_multiple, planned_rr, balance_before, trading_day, weekday, session_id)
+      WHERE t.id = v.id::text`;
+  });
 }
 
 export async function rebuildAllAccounts(userId: string) {
