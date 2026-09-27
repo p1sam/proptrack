@@ -14,7 +14,8 @@ export function proxy(request: NextRequest) {
     if (pathname !== "/") url.searchParams.set("next", pathname);
     return NextResponse.redirect(url);
   }
-  if (hasSession && isAuthPage) return NextResponse.redirect(new URL("/", request.url));
+  // Never redirect away from /login based on the cookie alone: a stale cookie (expired or deleted
+  // session) would bounce between /login and / forever. The auth layout checks the real session.
   return NextResponse.next();
 }
 
