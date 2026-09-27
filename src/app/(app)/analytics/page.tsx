@@ -4,6 +4,7 @@ import { requireUser } from "@/server/session";
 import { getAnalyticsPage, type AnalyticsPageData, type TradeRef } from "@/server/queries/analytics-page";
 import { parseTradeFilters } from "@/lib/filters";
 import type { GroupStats } from "@/lib/calc/stats";
+import { mean, percentOf } from "@/lib/calc/money";
 import { formatDayKey, formatMoney, formatMonthKey, formatPct, formatR, formatRatio } from "@/lib/format";
 import { PageHeader, Section } from "@/components/app/page-header";
 import { StatCard, StatGrid } from "@/components/app/stat-card";
@@ -166,7 +167,7 @@ function Overview({ d, ccy }: P) {
           <div><dt className="text-xs text-muted-foreground">Average day</dt><dd><Pnl value={d.daySummary.averageDay} currency={ccy} /></dd></div>
           <div><dt className="text-xs text-muted-foreground">Best day</dt><dd><Pnl value={d.daySummary.bestDay?.pnl} currency={ccy} /> <span className="text-xs text-muted-foreground">{d.daySummary.bestDay ? formatDayKey(d.daySummary.bestDay.day) : ""}</span></dd></div>
           <div><dt className="text-xs text-muted-foreground">Worst day</dt><dd><Pnl value={d.daySummary.worstDay?.pnl} currency={ccy} /> <span className="text-xs text-muted-foreground">{d.daySummary.worstDay ? formatDayKey(d.daySummary.worstDay.day) : ""}</span></dd></div>
-          <div><dt className="text-xs text-muted-foreground">Trades per day</dt><dd className="tabular">{d.daily.length ? formatRatio(d.daySummary.totalTrades / d.daily.length, 1) : "—"}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Trades per day</dt><dd className="tabular">{formatRatio(mean(d.daily.map((x) => x.trades)), 1)}</dd></div>
         </dl>
       </Section>
     </div>
@@ -269,7 +270,7 @@ function Distribution({ d, ccy }: P) {
                 label: formatMoney((b.from + b.to) / 2, ccy, { sign: true, dp: 0, compact: true }),
                 value: b.count,
                 tone: b.tone,
-                details: [{ label: "range", value: `${formatMoney(b.from, ccy, { dp: 0 })} to ${formatMoney(b.to, ccy, { dp: 0 })}` }, { label: "of trades", value: formatPct((b.count / total) * 100) }],
+                details: [{ label: "range", value: `${formatMoney(b.from, ccy, { dp: 0 })} to ${formatMoney(b.to, ccy, { dp: 0 })}` }, { label: "of trades", value: formatPct(percentOf(b.count, total)) }],
               }))}
             />
           }
@@ -277,7 +278,7 @@ function Distribution({ d, ccy }: P) {
             <BucketTable
               caption="P&L distribution"
               columns={[{ label: "Net P&L range" }, { label: "Trades" }, { label: "Share" }]}
-              rows={pnl.map((b) => ({ key: b.label, cells: [`${formatMoney(b.from, ccy, { dp: 0 })} to ${formatMoney(b.to, ccy, { dp: 0 })}`, b.count, formatPct((b.count / total) * 100)] }))}
+              rows={pnl.map((b) => ({ key: b.label, cells: [`${formatMoney(b.from, ccy, { dp: 0 })} to ${formatMoney(b.to, ccy, { dp: 0 })}`, b.count, formatPct(percentOf(b.count, total))] }))}
             />
           }
         />
@@ -294,14 +295,14 @@ function Distribution({ d, ccy }: P) {
                 kind="count"
                 valueLabel="trades"
                 height={260}
-                data={r.map((b) => ({ key: b.label, label: b.label, value: b.count, tone: b.tone, details: [{ label: "of trades with R", value: formatPct((b.count / withR) * 100) }] }))}
+                data={r.map((b) => ({ key: b.label, label: b.label, value: b.count, tone: b.tone, details: [{ label: "of trades with R", value: formatPct(percentOf(b.count, withR)) }] }))}
               />
             }
             table={
               <BucketTable
                 caption="R distribution"
                 columns={[{ label: "R bucket" }, { label: "Trades" }, { label: "Share" }]}
-                rows={r.map((b) => ({ key: b.label, cells: [b.label, b.count, formatPct((b.count / withR) * 100)] }))}
+                rows={r.map((b) => ({ key: b.label, cells: [b.label, b.count, formatPct(percentOf(b.count, withR))] }))}
               />
             }
           />
@@ -312,9 +313,9 @@ function Distribution({ d, ccy }: P) {
           caption="Wins vs losses"
           columns={[{ label: "Outcome" }, { label: "Trades" }, { label: "Share" }, { label: "Total" }, { label: "Average" }]}
           rows={[
-            { key: "w", cells: ["Winners", d.stats.wins, formatPct((d.stats.wins / total) * 100), <Pnl key="t" value={d.stats.grossProfit} currency={ccy} />, <Pnl key="a" value={d.stats.averageWinner} currency={ccy} />] },
-            { key: "l", cells: ["Losers", d.stats.losses, formatPct((d.stats.losses / total) * 100), <Pnl key="t" value={-d.stats.grossLoss} currency={ccy} />, <Pnl key="a" value={d.stats.averageLoser} currency={ccy} />] },
-            { key: "b", cells: ["Break-even", d.stats.breakevens, formatPct((d.stats.breakevens / total) * 100), "—", "—"] },
+            { key: "w", cells: ["Winners", d.stats.wins, formatPct(percentOf(d.stats.wins, total)), <Pnl key="t" value={d.stats.grossProfit} currency={ccy} />, <Pnl key="a" value={d.stats.averageWinner} currency={ccy} />] },
+            { key: "l", cells: ["Losers", d.stats.losses, formatPct(percentOf(d.stats.losses, total)), <Pnl key="t" value={-d.stats.grossLoss} currency={ccy} />, <Pnl key="a" value={d.stats.averageLoser} currency={ccy} />] },
+            { key: "b", cells: ["Break-even", d.stats.breakevens, formatPct(percentOf(d.stats.breakevens, total)), "—", "—"] },
           ]}
         />
       </Section>

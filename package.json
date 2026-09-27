@@ -10,7 +10,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:start": "pglite-server --db=./.pglite --port=51214 --max-connections=20",
+    "db:start": "node scripts/db-dev.mjs",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx --conditions=react-server prisma/seed.ts",
     "db:reset": "node scripts/reset-db.mjs",
@@ -47,8 +47,6 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.8",
-    "@electric-sql/pglite-socket": "^0.2.11",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^24.19.0",
     "@types/papaparse": "^5.5.2",
@@ -56,6 +54,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "dotenv": "^18.0.4",
+    "embedded-postgres": "^17.10.0-beta.17",
     "eslint": "^9",
     "eslint-config-next": "16.3.6",
     "tailwindcss": "^4",
@@ -67,6 +66,7 @@
     "@prisma/engines@7.10.0": true,
     "prisma@7.10.0": true,
     "esbuild@0.28.2": true,
-    "unrs-resolver@1.12.2": true
+    "unrs-resolver@1.12.2": true,
+    "@embedded-postgres/linux-x64@17.10.0-beta.17": true
   }
 }

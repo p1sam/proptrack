@@ -77,7 +77,7 @@ export function parseCsv(input: string, opts: { delimiter?: string } = {}): Pars
     const filled = r.filter((c) => c.trim() !== "");
     if (!filled.length) continue;
     // A single-cell line after data (e.g. "Orders", "Deals" in MetaTrader reports) starts a new section.
-    if (filled.length === 1 && r.length < headers.length && rows.length > 0 && !/^\s*-?[\d.,]+\s*$/.test(filled[0])) {
+    if (filled.length === 1 && headers.length > 2 && rows.length > 0 && !/^\s*-?[\d.,]+\s*$/.test(filled[0])) {
       notes.push(`Stopped at section "${filled[0].trim().slice(0, 40)}" — only the first table is imported.`);
       break;
     }

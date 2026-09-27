@@ -32,6 +32,7 @@ export class LocalDiskDriver implements StorageDriver {
     return full;
   }
 
+  // contentType is not needed on disk: the MIME type is stored on the TradeScreenshot row.
   async put(key: string, data: Uint8Array): Promise<void> {
     const full = this.resolve(key);
     await mkdir(path.dirname(full), { recursive: true });

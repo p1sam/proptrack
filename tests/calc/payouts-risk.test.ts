@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { computePayoutStats, payoutEventSpecs, payoutIssues, shouldMarkAccountReceived, suggestAmountReceived, type PayoutStatItem } from "@/lib/calc/payouts";
-import { countExceeding, dailyRiskSeries, riskPctHistogram, samplesNeeded, summarizeRisk } from "@/lib/calc/risk";
+import { countExceeding, dailyRiskSeries, riskPctHistogram, samplesNeeded, strictestLimit, summarizeRisk } from "@/lib/calc/risk";
 import { allowanceTone, propRuleTones } from "@/lib/calc/rule-status";
 
 const d = (s: string) => new Date(s);
@@ -123,8 +123,12 @@ describe("risk summaries", () => {
     const h = riskPctHistogram([0.1, 0.5, 1, 1.2, 5], 1.2);
     expect(h.reduce((a, b) => a + b.count, 0)).toBe(5);
     const over = h.filter((b) => b.overLimit).reduce((a, b) => a + b.count, 0);
-    expect(over).toBe(2); // 1.2 (at the limit edge) and 5
-    expect(h[0]).toMatchObject({ label: "< 0.25%", count: 1 });
+    expect(over).toBe(1); // only 5 — a trade exactly at the limit is within it, as in countExceeding
+    expect(over).toBe(countExceeding([0.1, 0.5, 1, 1.2, 5], 1.2).exceeded);
+    expect(h[0]).toMatchObject({ label: "≤ 0.25%", count: 1 });
+    expect(h.find((b) => b.label === "0.75%–1%")?.count).toBe(1);
+    expect(h.find((b) => b.label === "1%–1.2%")?.count).toBe(1);
+    expect(h.at(-1)).toMatchObject({ label: "> 3%", count: 1, overLimit: true });
   });
   it("daily risk sums initial risk per day", () => {
     expect(dailyRiskSeries(trades)).toEqual([
@@ -136,6 +140,8 @@ describe("risk summaries", () => {
     expect(countExceeding([0.5, 1, 1.0000000001, 1.5, null], 1)).toEqual({ exceeded: 1, measured: 4, pct: 25 });
     expect(samplesNeeded(12, 20)).toBe(8);
     expect(samplesNeeded(30, 20)).toBe(0);
+    expect(strictestLimit([2, null, 1, 0, undefined])).toBe(1);
+    expect(strictestLimit([null])).toBeNull();
   });
 });
 

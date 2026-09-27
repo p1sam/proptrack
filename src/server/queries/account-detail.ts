@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import type { AccountStatus, AccountType } from "@/generated/prisma/enums";
 import { num, numOrNull } from "@/lib/num";
 import { prisma } from "../db";
@@ -56,7 +57,7 @@ export function ruleDTO(rule: RuleRow | null): RuleDTO | null {
   };
 }
 
-export async function getAccountDetail(userId: string, accountId: string) {
+export const getAccountDetail = cache(async (userId: string, accountId: string) => {
   const [res, state, account] = await Promise.all([
     getAccountSummary(userId, accountId),
     getAccountState(userId, accountId),
@@ -83,7 +84,7 @@ export async function getAccountDetail(userId: string, accountId: string) {
       notes: f.notes,
     })),
   };
-}
+});
 export type AccountDetail = NonNullable<Awaited<ReturnType<typeof getAccountDetail>>>;
 
 export async function getAccountTrades(userId: string, accountId: string, take = 50) {

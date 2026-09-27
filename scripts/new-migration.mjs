@@ -1,6 +1,6 @@
 // Create a migration from the difference between the database and prisma/schema.prisma.
 // Usage: npm run db:migration:new -- <name>
-// (Works with the single-database local PGlite server, which has no shadow database.)
+// (Diffs against the live database, so no shadow database is needed.)
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 

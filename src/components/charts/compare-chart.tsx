@@ -5,6 +5,7 @@ import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Too
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { formatDayKey, formatMoney, formatR } from "@/lib/format";
 import { AXIS_PROPS, GRID_PROPS, TooltipBox } from "./chart-tooltip";
+import { SERIES_COLORS } from "./palette";
 
 export interface CompareSeries {
   key: string;
@@ -15,8 +16,7 @@ export interface CompareRow {
   values: Record<string, number>;
 }
 
-/** Fixed categorical order — colour follows the series' position in the selection, never its rank. */
-export const COMPARE_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)"] as const;
+const COMPARE_COLORS = SERIES_COLORS;
 
 /** Overlaid cumulative curves (money or R) on one axis, one colour per series, with a legend. */
 export function CompareChart({ series, money, r, currency, height = 300 }: { series: CompareSeries[]; money: CompareRow[]; r: CompareRow[]; currency: string; height?: number }) {

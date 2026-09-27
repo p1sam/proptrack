@@ -35,7 +35,7 @@ const hhmm = z
 
 const ruleFields = z.object({
   type: tradingRuleTypeEnum,
-  value: optionalNumber,
+  value: optionalNumber.optional().transform((v) => v ?? null),
   /** "HH:MM" in the user's timezone, TRADING_HOURS only. */
   start: hhmm,
   end: hhmm,

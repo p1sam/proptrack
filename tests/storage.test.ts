@@ -59,7 +59,7 @@ describe("LocalDiskDriver", async () => {
 
   it("puts, gets and deletes an object", async () => {
     const data = bytes(0x89, "PNG", 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3);
-    await driver.put("screenshots/a.png", data, "image/png");
+    await driver.put("screenshots/a.png", data);
     const obj = await driver.get("screenshots/a.png");
     expect(obj?.size).toBe(data.length);
     const read = new Uint8Array(await new Response(obj!.stream).arrayBuffer());
@@ -70,8 +70,8 @@ describe("LocalDiskDriver", async () => {
   });
 
   it("never overwrites an existing key", async () => {
-    await driver.put("screenshots/b.png", bytes(1), "image/png");
-    await expect(driver.put("screenshots/b.png", bytes(2), "image/png")).rejects.toThrow();
+    await driver.put("screenshots/b.png", bytes(1));
+    await expect(driver.put("screenshots/b.png", bytes(2))).rejects.toThrow();
   });
 
   it("returns null for missing keys and ignores deleting them", async () => {

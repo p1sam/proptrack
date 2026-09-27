@@ -5,36 +5,10 @@ import { EMOTIONS, type Emotion } from "@/lib/calc/behavior";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { EMOTION_META, JOURNAL_SECTIONS, RATING_LABEL, type JournalTextField } from "./labels";
+import { EMOTION_META, JOURNAL_SECTIONS, RATING_LABEL } from "./labels";
+import type { JournalValues } from "./journal-values";
 
-export type JournalValues = { [K in JournalTextField]: string } & { [K in Emotion]: number | null } & { followedPlan: boolean | null };
-
-const TEXT_FIELDS = JOURNAL_SECTIONS.flatMap((s) => s.fields.map((f) => f.key));
-
-export function emptyJournal(): JournalValues {
-  const v = { followedPlan: null } as JournalValues;
-  for (const k of TEXT_FIELDS) v[k] = "";
-  for (const e of EMOTIONS) v[e] = null;
-  return v;
-}
-
-export function journalFromData(data: Partial<Record<string, string | number | boolean | null>> | null | undefined): JournalValues {
-  const v = emptyJournal();
-  if (!data) return v;
-  for (const k of TEXT_FIELDS) v[k] = (data[k] as string | null) ?? "";
-  for (const e of EMOTIONS) v[e] = (data[e] as number | null) ?? null;
-  v.followedPlan = (data.followedPlan as boolean | null) ?? null;
-  return v;
-}
-
-/** Shape accepted by journalSchema (empty strings become null there). */
-export function journalToInput(v: JournalValues) {
-  return { ...v };
-}
-
-export function journalHasContent(v: JournalValues) {
-  return TEXT_FIELDS.some((k) => v[k].trim()) || EMOTIONS.some((e) => v[e] !== null) || v.followedPlan !== null;
-}
+export type { JournalValues };
 
 export function FollowedPlanField({ value, onChange, idPrefix }: { value: boolean | null; onChange: (v: boolean | null) => void; idPrefix: string }) {
   const opts: { v: boolean | null; label: string }[] = [

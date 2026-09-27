@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import type { RuleInput } from "@/lib/validation/account";
 import { cn } from "@/lib/utils";
+import { DAILY_BASIS_LABEL, DRAWDOWN_TYPE_LABEL } from "./rule-labels";
 
 /** Rule form state: numeric inputs are kept as strings ("" = no rule); zod parses them. */
 export interface RuleFormState {
@@ -30,9 +31,8 @@ export interface RuleFormState {
   dayResetTimezone: string;
 }
 
-type RuleLike = Partial<{
-  [K in keyof RuleFormState]: RuleFormState[K] extends string ? number | string | null : RuleFormState[K];
-}>;
+type EnumOrBoolKeys = "dailyLossBasis" | "drawdownType" | "trailingLocksAtStart" | "weekendHoldingAllowed" | "newsTradingAllowed";
+type RuleLike = Partial<{ [K in Exclude<keyof RuleFormState, EnumOrBoolKeys>]: number | string | null } & Pick<RuleFormState, EnumOrBoolKeys>>;
 
 const s = (v: number | string | null | undefined) => (v === null || v === undefined ? "" : String(v));
 
@@ -135,17 +135,6 @@ export const RULE_PRESETS: { label: string; description: string; rule: Partial<R
     rule: { profitTargetPct: "", minTradingDays: "", maxDailyLossPct: "5", maxOverallLossPct: "10", drawdownType: "STATIC", profitSplitPct: "80", payoutFrequencyDays: "14" },
   },
 ];
-
-export const DRAWDOWN_TYPE_LABEL: Record<RuleFormState["drawdownType"], string> = {
-  STATIC: "Static",
-  TRAILING_EOD: "Trailing (end of day)",
-  TRAILING_BALANCE: "Trailing (closed balance)",
-};
-
-export const DAILY_BASIS_LABEL: Record<RuleFormState["dailyLossBasis"], string> = {
-  STARTING_BALANCE: "% of starting balance",
-  DAY_START_BALANCE: "% of day-start balance",
-};
 
 type FieldErrors = Record<string, string[] | undefined> | undefined;
 

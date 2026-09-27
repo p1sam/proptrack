@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { GroupStats } from "@/lib/calc/stats";
-import { formatMoney, formatPct, formatR, formatRatio } from "@/lib/format";
+import { formatMoney, formatPct, formatRatio } from "@/lib/format";
 import { Pnl, RValue } from "@/components/app/pnl";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 

@@ -10,12 +10,12 @@ analytics computed only from your own data.
 ## Quick start (local)
 
 Requirements: Node 20.9+ (tested on Node 26). No Docker or system Postgres needed — local
-development uses PGlite, a real Postgres engine embedded in Node.
+development runs real PostgreSQL 17 from the `embedded-postgres` npm package.
 
 ```bash
 npm install
 cp .env.example .env      # then set BETTER_AUTH_SECRET (command in the file)
-npm run db:start          # terminal 1 — Postgres on 127.0.0.1:51214 (data in ./.pglite)
+npm run db:start          # terminal 1 — Postgres 17 on 127.0.0.1:51216 (data in ./.postgres)
 npm run db:migrate        # terminal 2 — apply migrations
 npm run db:seed           # optional demo data
 npm run dev               # http://localhost:3000
@@ -38,7 +38,7 @@ EUR/USD rate. It prints each account's rule-engine state so you can check the st
 | `npm test` | Unit tests (financial calculations, parsers, rules) |
 | `npm run test:integration` | Database tests incl. user data isolation (needs `db:start`) |
 | `npm run typecheck` / `npm run lint` | Type checking / ESLint |
-| `npm run db:start` | Local PGlite Postgres server |
+| `npm run db:start` | Local PostgreSQL 17 server (embedded-postgres, no Docker) |
 | `npm run db:migrate` | Apply migrations (`prisma migrate deploy`) |
 | `npm run db:migration:new -- <name>` | Generate a migration from schema changes |
 | `npm run db:seed` | (Re)create the demo user and data |

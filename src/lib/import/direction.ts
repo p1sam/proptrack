@@ -8,7 +8,8 @@ const SHORT = new Set(["sell", "short", "s", "sld", "sold", "sell limit", "sell 
 const NON_TRADE = new Set(["balance", "deposit", "withdrawal", "withdraw", "credit", "bonus", "correction", "commission", "fee", "dividend", "interest", "transfer", "adjustment", "charge", "rebate"]);
 
 export function parseDirection(raw: string | null | undefined): ParsedDirection {
-  const s = (raw ?? "").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  const t = (raw ?? "").trim().toLowerCase();
+  const s = /^[-+]?\d+$/.test(t) ? t : t.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
   if (!s) return { kind: "invalid" };
   if (LONG.has(s)) return { kind: "trade", direction: "LONG" };
   if (SHORT.has(s)) return { kind: "trade", direction: "SHORT" };

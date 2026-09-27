@@ -13,7 +13,7 @@ payouts, with a rule engine, analytics and behavioural insights computed from th
 | Auth | Better Auth (email + password, DB sessions, Postgres-backed rate limiting) |
 | Validation | Zod 4 — shared schemas in `src/lib/validation` |
 | Tests | Vitest (`tests/**`) |
-| Local DB | PGlite (embedded Postgres) served over TCP by `npm run db:start` |
+| Local DB | PostgreSQL 17 binaries from `embedded-postgres`, started by `npm run db:start` |
 
 Better Auth is used instead of Auth.js because Auth.js v5 is still in beta and its credentials
 provider does not manage password storage or DB sessions; Better Auth does both, plus rate

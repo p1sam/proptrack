@@ -2,19 +2,24 @@ import { z } from "zod";
 import { payoutIssues } from "@/lib/calc/payouts";
 import { currency, id, isoDateTime, nonNegativeOptional, optionalDateTime, optionalText, pctOptional, positiveNumber } from "./common";
 
+/** Missing keys behave like empty inputs (null), so callers may omit optional fields. */
+const opt = <T extends z.ZodType>(schema: T) => schema.optional().transform((v) => (v ?? null) as NonNullable<z.output<T>> | null);
+const optDate = opt(optionalDateTime);
+const optMoney = opt(nonNegativeOptional);
+
 export const payoutStatusEnum = z.enum(["PENDING", "REQUESTED", "APPROVED", "PAID", "REJECTED"]);
 
 const payoutFields = z.object({
   accountId: id,
   status: payoutStatusEnum.default("REQUESTED"),
-  requestedAt: optionalDateTime,
-  approvedAt: optionalDateTime,
-  paidAt: optionalDateTime,
+  requestedAt: optDate,
+  approvedAt: optDate,
+  paidAt: optDate,
   /** Gross amount withdrawn from the trading account. */
   amountRequested: positiveNumber,
-  profitSplitPct: pctOptional,
-  fees: nonNegativeOptional.transform((v) => v ?? 0),
-  amountReceived: nonNegativeOptional,
+  profitSplitPct: opt(pctOptional),
+  fees: optMoney.transform((v) => v ?? 0),
+  amountReceived: optMoney,
   paymentMethod: optionalText(64),
   currency: currency.optional(),
   deductFromBalance: z.boolean().default(true),
@@ -41,7 +46,7 @@ export const payoutTransitionSchema = z
     id,
     to: z.enum(["REQUESTED", "APPROVED", "PAID", "REJECTED"]),
     at: isoDateTime,
-    amountReceived: nonNegativeOptional,
+    amountReceived: optMoney,
     markAccountReceived: z.boolean().default(true),
   })
   .superRefine((v, ctx) => {

@@ -10,9 +10,9 @@ export const timeZone = z
   .min(1, "Choose a timezone")
   .refine((tz) => isValidTimeZone(tz), "Unknown IANA timezone");
 
+/** Optional user-picked colour; "" / null / undefined mean "no colour". */
 export const hexColor = z
-  .string()
-  .regex(/^#[0-9a-fA-F]{6}$/, "Use a hex colour like #3b82f6")
+  .union([z.literal(""), z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a hex colour like #3b82f6")])
   .optional()
   .nullable()
   .transform((v) => v || null);
