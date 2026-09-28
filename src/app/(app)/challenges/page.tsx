@@ -66,8 +66,8 @@ function ChallengeCard({ a, tz }: { a: AccountSummary; tz: string }) {
         <div className="flex flex-col gap-1.5">
           <div className="flex items-baseline justify-between text-sm">
             <span className="text-muted-foreground">Progress</span>
-            <span className="font-mono text-xs tracking-tight" aria-hidden>
-              {textBar(t.progressPct)} <span className="font-sans text-sm font-semibold">{formatPct(t.progressPct, { dp: 0 })}</span>
+            <span className="font-mono text-xs tracking-tight text-muted-foreground" aria-hidden>
+              {textBar(t.progressPct)} <span className="font-sans text-sm font-semibold text-foreground">{formatPct(t.progressPct, { dp: 0 })}</span>
             </span>
           </div>
           <Meter value={t.progressPct} tone={t.reached ? "profit" : "primary"} label={`Profit target progress ${formatPct(t.progressPct)}`} />
